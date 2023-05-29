@@ -23,10 +23,17 @@ use tracing::{info, instrument, trace, warn};
 
 use super::Viewport;
 
+enum Origin {
+    Prepared(Point),
+    ReadyForCommit(Point),
+}
+
 /// Represents the size and position of a rectangular "viewport" into a larger area.
 /// A widget exposing a rectangular view into its child, which can be used as a building block for
 /// widgets that scroll their child.
 pub struct SlidingClipBox<T, W, Y> {
+    prev_origin: Point,
+    pending_origin: Option<Origin>,
     container: WidgetPod<T, W>,
     sliding_child: WidgetPod<T, Y>,
     port: Viewport,
@@ -38,6 +45,39 @@ pub struct SlidingClipBox<T, W, Y> {
 
     //This ClipBox is wrapped by a widget which manages the viewport_offset
     managed: bool,
+}
+
+impl<T, W, Y> SlidingClipBox<T, W, Y>
+where
+    T: Data,
+    W: Widget<T>,
+    Y: Widget<T>,
+{
+    // the thinking here is that we can remember and defer the calculated origin from the layout method
+    // so that the next update call can update the data and then commit the origin now that the data has been updated
+    // to keep the sliding child in sync with the scroll offset
+
+    // 1. lifecycle is scroll triggers layout
+    // 2. layout calculates origin
+    // 3. update updates data
+    // 4. update readies origin for commit
+    // 5. layout commits origin which will be in sync with the sliding child data and the layout of the data
+
+    pub fn prepare_origin(&mut self, origin: Point) {
+        self.pending_origin = Some(Origin::Prepared(origin));
+    }
+
+    pub fn set_origin(&mut self, ctx: &mut impl ChangeCtx) {
+        match self.pending_origin {
+            Some(Origin::ReadyForCommit(point)) => {
+                self.container.set_origin(ctx, point);
+                self.pending_origin = None;
+            }
+            _ => {
+                self.container.set_origin(ctx, self.prev_origin);
+            }
+        }
+    }
 }
 
 impl<T, W, Y> SlidingClipBox<T, W, Y> {
@@ -224,7 +264,7 @@ impl<T, W: Widget<T>, Y: Widget<T>> SlidingClipBox<T, W, Y> {
         let new_content_origin = (Point::ZERO - self.port.view_origin).to_point();
 
         if new_content_origin != self.container.layout_rect().origin() {
-            self.container.set_origin(ctx, new_content_origin);
+            // self.container.set_origin(ctx, new_content_origin);
             true
         } else {
             false
@@ -305,11 +345,14 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> 
         let child_bc =
             BoxConstraints::new(min_child_size, Size::new(max_child_width, max_child_height));
 
+        // println!("child bc: {:?}", child_bc);
+
         let bc_changed = child_bc != self.old_bc;
         self.old_bc = child_bc;
 
         let content_size = if bc_changed || self.container.layout_requested() {
             self.container.layout(ctx, &child_bc, data, env)
+            // self.container.layout_rect().size()
         } else {
             self.container.layout_rect().size()
         };
@@ -319,6 +362,7 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> 
         self.port.sanitize_view_origin();
 
         // TODO: this might be the place where we can defer the update
+        //
         self.container
             .set_origin(ctx, (Point::ZERO - self.port.view_origin).to_point());
 
@@ -326,6 +370,7 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> 
             ctx.view_context_changed();
             self.old_size = self.viewport_size();
         }
+        println!("container rect: {:?}", self.container.layout_rect());
 
         trace!("Computed sized: {}", self.viewport_size());
         self.viewport_size()

@@ -22,7 +22,7 @@ use crate::widget::{Axis, ClipBox};
 use crate::{scroll_component::*, Data, Rect, Vec2};
 use tracing::{instrument, trace};
 
-use super::clip_box_2::SlidingClipBox;
+use super::sliding_clip_box::SlidingClipBox;
 
 /// A container that scrolls its contents.
 ///
