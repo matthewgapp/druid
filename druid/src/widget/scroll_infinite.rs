@@ -19,7 +19,7 @@ use crate::contexts::ChangeCtx;
 use crate::debug_state::DebugState;
 use crate::widget::prelude::*;
 use crate::widget::{Axis, ClipBox};
-use crate::{scroll_component::*, Data, Rect, Vec2};
+use crate::{scroll_component::*, Data, Rect, Vec2, Command, Selector};
 use tracing::{instrument, trace};
 
 use super::clip_box::ViewportRect;
@@ -182,7 +182,11 @@ impl<T, W> ScrollInfinite<T, W> {
     }
 }
 
+const SIZE_CHANGED: Selector<Size> = Selector::new("druid-builtin.scroll.size-changed");
+
+
 pub trait SharesViewport {
+    fn effective_rect(&self) -> Rect;
     fn viewport_rect(&self) -> Rect;
     fn set_viewport_rect(&mut self, rect: Rect);
 }
@@ -190,6 +194,20 @@ pub trait SharesViewport {
 impl<T: Data + SharesViewport, W: Widget<T>> Widget<T> for ScrollInfinite<T, W> {
     #[instrument(name = "Scroll", level = "trace", skip(self, ctx, event, data, env))]
     fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut T, env: &Env) {
+        println!("event in scroll infinite: {:?} ", event);
+
+        match event {
+            Event::Command(cmd) if cmd.is(SIZE_CHANGED) => {
+                let size = cmd.get_unchecked(SIZE_CHANGED);
+                let current_origin = self.clip.viewport_origin();
+                let new_rect = Rect::from_origin_size(current_origin, *size);
+                data.set_viewport_rect(new_rect);
+                ctx.set_handled();
+            }
+            _ => (),
+        }
+
+
         let scroll_component = &mut self.scroll_component;
         let view_port_rect = self.clip.viewport_rect_with_origin(ctx, |ctx, port| {
             scroll_component.event(port, ctx, event, env);
@@ -198,6 +216,7 @@ impl<T: Data + SharesViewport, W: Widget<T>> Widget<T> for ScrollInfinite<T, W> 
         if !ctx.is_handled() {
             self.clip.event(ctx, event, data, env);
         }
+
 
         // Handle scroll after the inner widget processed the events, to prefer inner widgets while
         // scrolling.
@@ -227,10 +246,19 @@ impl<T: Data + SharesViewport, W: Widget<T>> Widget<T> for ScrollInfinite<T, W> 
             }
             _ => {}
         }
+
+
     }
 
     #[instrument(name = "Scroll", level = "trace", skip(self, ctx, event, data, env))]
     fn lifecycle(&mut self, ctx: &mut LifeCycleCtx, event: &LifeCycle, data: &T, env: &Env) {
+        match event {
+            LifeCycle::Size(size) => {
+                ctx.submit_command(SIZE_CHANGED.with(*size).to(ctx.widget_id()));
+                println!("size changed {:?}", size);
+            }
+            _ => {}
+        }
         self.scroll_component.lifecycle(ctx, event, env);
         self.clip.lifecycle(ctx, event, data, env);
     }
@@ -243,6 +271,7 @@ impl<T: Data + SharesViewport, W: Widget<T>> Widget<T> for ScrollInfinite<T, W> 
     #[instrument(name = "Scroll", level = "trace", skip(self, ctx, bc, data, env))]
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints, data: &T, env: &Env) -> Size {
         bc.debug_check("Scroll");
+        println!("layout called. viewport rect is {:?}", self.clip.viewport().view_rect());
 
         let old_size = self.clip.viewport().view_size;
         let child_size = self.clip.layout(ctx, bc, data, env);

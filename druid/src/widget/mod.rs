@@ -50,7 +50,6 @@ mod scroll;
 pub mod scroll_infinite;
 mod sized_box;
 mod slider;
-mod sliding_clip_box;
 mod spinner;
 mod split;
 mod stepper;
