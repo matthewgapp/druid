@@ -25,6 +25,7 @@ mod button;
 mod checkbox;
 mod click;
 mod clip_box;
+pub mod clip_box_signal;
 mod common;
 mod container;
 mod controller;

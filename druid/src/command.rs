@@ -353,6 +353,10 @@ pub mod sys {
     /// [`Viewport::default_scroll_to_view_handling`]: crate::widget::Viewport::default_scroll_to_view_handling()
     pub const SCROLL_TO_VIEW: Selector<Rect> = Selector::new("druid-builtin.scroll-to");
 
+    /// this is a signal sent from ClipBox anytime the viewport changes after layout so that parents change react to it.
+    pub const SCROLL_VIEWPORT_CHANGED: Selector<Rect> =
+        Selector::new("druid-builtin.scroll-viewport-changed");
+
     /// A change that has occurred to text state, and needs to be
     /// communicated to the platform.
     pub(crate) struct ImeInvalidation {
