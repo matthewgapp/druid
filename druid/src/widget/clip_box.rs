@@ -393,17 +393,35 @@ impl<T, W: Widget<T>> ClipBox<T, W> {
         ctx: &mut C,
         f: F,
     ) -> bool {
+        match self.viewport_rect_with_origin(ctx, f) {
+            ViewportRect::Changed(_) => true,
+            ViewportRect::Unchanged(_) => false,
+        }
+    }
+
+    /// Modify the `ClipBox`'s viewport rectangle with a closure.
+    /// experimental API
+    pub fn viewport_rect_with_origin<C: ChangeCtx, F: FnOnce(&mut C, &mut Viewport)>(
+        &mut self,
+        ctx: &mut C,
+        f: F,
+    ) -> ViewportRect {
         f(ctx, &mut self.port);
         self.port.sanitize_view_origin();
         let new_content_origin = (Point::ZERO - self.port.view_origin).to_point();
 
         if new_content_origin != self.child.layout_rect().origin() {
             self.child.set_origin(ctx, new_content_origin);
-            true
+            ViewportRect::Changed(self.port.view_rect())
         } else {
-            false
+            ViewportRect::Unchanged(self.port.view_rect())
         }
     }
+}
+
+pub enum ViewportRect {
+    Unchanged(Rect),
+    Changed(Rect),
 }
 
 impl<T: Data, W: Widget<T>> Widget<T> for ClipBox<T, W> {

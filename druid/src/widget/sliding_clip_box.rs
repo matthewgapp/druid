@@ -21,6 +21,7 @@ use crate::widget::Axis;
 use crate::{platform_menus, Data, InternalLifeCycle, WidgetPod};
 use tracing::{info, instrument, trace, warn};
 
+use super::scroll_infinite::SharesViewport;
 use super::Viewport;
 
 enum Origin {
@@ -32,8 +33,9 @@ enum Origin {
 /// A widget exposing a rectangular view into its child, which can be used as a building block for
 /// widgets that scroll their child.
 pub struct SlidingClipBox<T, W, Y> {
-    prev_origin: Point,
-    pending_origin: Option<Origin>,
+    // prev_origin: Point,
+    // pending_origin: Option<Origin>,
+    _origin: Point,
     container: WidgetPod<T, W>,
     sliding_child: WidgetPod<T, Y>,
     port: Viewport,
@@ -63,21 +65,21 @@ where
     // 4. update readies origin for commit
     // 5. layout commits origin which will be in sync with the sliding child data and the layout of the data
 
-    pub fn prepare_origin(&mut self, origin: Point) {
-        self.pending_origin = Some(Origin::Prepared(origin));
-    }
+    // pub fn prepare_origin(&mut self, origin: Point) {
+    //     self.pending_origin = Some(Origin::Prepared(origin));
+    // }
 
-    pub fn set_origin(&mut self, ctx: &mut impl ChangeCtx) {
-        match self.pending_origin {
-            Some(Origin::ReadyForCommit(point)) => {
-                self.container.set_origin(ctx, point);
-                self.pending_origin = None;
-            }
-            _ => {
-                self.container.set_origin(ctx, self.prev_origin);
-            }
-        }
-    }
+    // pub fn set_origin(&mut self, ctx: &mut impl ChangeCtx) {
+    //     match self.pending_origin {
+    //         Some(Origin::ReadyForCommit(point)) => {
+    //             self.container.set_origin(ctx, point);
+    //             self.pending_origin = None;
+    //         }
+    //         _ => {
+    //             self.container.set_origin(ctx, self.prev_origin);
+    //         }
+    //     }
+    // }
 }
 
 impl<T, W, Y> SlidingClipBox<T, W, Y> {
@@ -193,6 +195,7 @@ impl<T, W: Widget<T>, Y: Widget<T>> SlidingClipBox<T, W, Y> {
     /// [`SCROLL_TO_VIEW`]: crate::commands::SCROLL_TO_VIEW
     pub fn managed(containing_child: W, sliding_child: Y) -> Self {
         SlidingClipBox {
+            _origin: Default::default(),
             container: WidgetPod::new(containing_child),
             sliding_child: WidgetPod::new(sliding_child),
             port: Default::default(),
@@ -210,6 +213,7 @@ impl<T, W: Widget<T>, Y: Widget<T>> SlidingClipBox<T, W, Y> {
     /// This method should be used when you are using `ClipBox` in the widget tree directly.
     pub fn unmanaged(containing_child: W, sliding_child: Y) -> Self {
         SlidingClipBox {
+            _origin: Default::default(),
             container: WidgetPod::new(containing_child),
             sliding_child: WidgetPod::new(sliding_child),
             port: Default::default(),
@@ -226,9 +230,13 @@ impl<T, W: Widget<T>, Y: Widget<T>> SlidingClipBox<T, W, Y> {
     ///
     /// Returns `true` if the scroll offset has changed.
     pub fn pan_by<C: ChangeCtx>(&mut self, ctx: &mut C, delta: Vec2) -> bool {
-        self.with_port(ctx, |_, port| {
+        let origin_changed = self.with_port(ctx, |_, port| {
             port.pan_by(delta);
-        })
+        });
+        if origin_changed {
+            self._origin = self.container.layout_rect().origin();
+        }
+        origin_changed
     }
 
     /// Pans the minimal distance to show the `region`.
@@ -236,18 +244,26 @@ impl<T, W: Widget<T>, Y: Widget<T>> SlidingClipBox<T, W, Y> {
     /// If the target region is larger than the viewport, we will display the
     /// portion that fits, prioritizing the portion closest to the origin.
     pub fn pan_to_visible<C: ChangeCtx>(&mut self, ctx: &mut C, region: Rect) -> bool {
-        self.with_port(ctx, |_, port| {
+        let origin_changed = self.with_port(ctx, |_, port| {
             port.pan_to_visible(region);
-        })
+        });
+        if origin_changed {
+            self._origin = self.container.layout_rect().origin();
+        }
+        origin_changed
     }
 
     /// Pan to this position on a particular axis.
     ///
     /// Returns `true` if the scroll offset has changed.
     pub fn pan_to_on_axis<C: ChangeCtx>(&mut self, ctx: &mut C, axis: Axis, position: f64) -> bool {
-        self.with_port(ctx, |_, port| {
+        let origin_changed = self.with_port(ctx, |_, port| {
             port.pan_to_on_axis(axis, position);
-        })
+        });
+        if origin_changed {
+            self._origin = self.port.view_origin
+        }
+        origin_changed
     }
 
     /// Modify the `ClipBox`'s viewport rectangle with a closure.
@@ -259,20 +275,38 @@ impl<T, W: Widget<T>, Y: Widget<T>> SlidingClipBox<T, W, Y> {
         ctx: &mut C,
         f: F,
     ) -> bool {
+        match self.viewport_rect_with_origin(ctx, f) {
+            ViewportRect::Changed(_) => true,
+            ViewportRect::Unchanged(_) => false,
+        }
+    }
+
+    /// Modify the `ClipBox`'s viewport rectangle with a closure.
+    /// experimental API
+    pub fn viewport_rect_with_origin<C: ChangeCtx, F: FnOnce(&mut C, &mut Viewport)>(
+        &mut self,
+        ctx: &mut C,
+        f: F,
+    ) -> ViewportRect {
         f(ctx, &mut self.port);
         self.port.sanitize_view_origin();
         let new_content_origin = (Point::ZERO - self.port.view_origin).to_point();
 
         if new_content_origin != self.container.layout_rect().origin() {
-            // self.container.set_origin(ctx, new_content_origin);
-            true
+            self.container.set_origin(ctx, new_content_origin);
+            ViewportRect::Changed(self.port.view_rect())
         } else {
-            false
+            ViewportRect::Unchanged(self.port.view_rect())
         }
     }
 }
 
-impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> {
+pub enum ViewportRect {
+    Unchanged(Rect),
+    Changed(Rect),
+}
+
+impl<T: Data + SharesViewport, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> {
     #[instrument(name = "ClipBox", level = "trace", skip(self, ctx, event, data, env))]
     fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut T, env: &Env) {
         if let Event::Notification(notification) = event {
@@ -298,6 +332,7 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> 
 
     #[instrument(name = "ClipBox", level = "trace", skip(self, ctx, event, data, env))]
     fn lifecycle(&mut self, ctx: &mut LifeCycleCtx, event: &LifeCycle, data: &T, env: &Env) {
+        // println!("lifecycle event: {:?}", event);
         match event {
             LifeCycle::ViewContextChanged(view_context) => {
                 let mut view_context = *view_context;
@@ -324,6 +359,7 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> 
         skip(self, ctx, _old_data, data, env)
     )]
     fn update(&mut self, ctx: &mut UpdateCtx, _old_data: &T, data: &T, env: &Env) {
+        // println!("update called with origin {:?}", self.port.view_origin);
         self.container.update(ctx, data, env);
     }
 
@@ -351,8 +387,8 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> 
         self.old_bc = child_bc;
 
         let content_size = if bc_changed || self.container.layout_requested() {
+            self.sliding_child.layout(ctx, &child_bc, data, env);
             self.container.layout(ctx, &child_bc, data, env)
-            // self.container.layout_rect().size()
         } else {
             self.container.layout_rect().size()
         };
@@ -362,15 +398,15 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> 
         self.port.sanitize_view_origin();
 
         // TODO: this might be the place where we can defer the update
-        //
         self.container
             .set_origin(ctx, (Point::ZERO - self.port.view_origin).to_point());
+        self.sliding_child.set_origin(ctx, self.port.view_origin);
 
         if self.viewport_size() != self.old_size {
             ctx.view_context_changed();
             self.old_size = self.viewport_size();
         }
-        println!("container rect: {:?}", self.container.layout_rect());
+        // println!("container rect: {:?}", self.container.layout_rect());
 
         trace!("Computed sized: {}", self.viewport_size());
         self.viewport_size()
@@ -381,6 +417,7 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for SlidingClipBox<T, W, Y> 
         let clip_rect = ctx.size().to_rect();
         ctx.clip(clip_rect);
         self.container.paint(ctx, data, env);
+        self.sliding_child.paint(ctx, data, env);
     }
 
     fn debug_state(&self, data: &T) -> DebugState {

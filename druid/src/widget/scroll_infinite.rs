@@ -22,7 +22,7 @@ use crate::widget::{Axis, ClipBox};
 use crate::{scroll_component::*, Data, Rect, Vec2};
 use tracing::{instrument, trace};
 
-use super::sliding_clip_box::SlidingClipBox;
+use super::clip_box::ViewportRect;
 
 /// A container that scrolls its contents.
 ///
@@ -36,20 +36,20 @@ use super::sliding_clip_box::SlidingClipBox;
 ///
 /// [`vertical`]: struct.Scroll.html#method.vertical
 /// [`horizontal`]: struct.Scroll.html#method.horizontal
-pub struct ScrollInfinite<T, W, Y> {
-    clip: SlidingClipBox<T, W, Y>,
+pub struct ScrollInfinite<T, W> {
+    clip: ClipBox<T, W>,
     scroll_component: ScrollComponent,
 }
 
-impl<T, W: Widget<T>, Y: Widget<T>> ScrollInfinite<T, W, Y> {
+impl<T, W: Widget<T>> ScrollInfinite<T, W> {
     /// Create a new scroll container.
     ///
     /// This method will allow scrolling in all directions if child's bounds
     /// are larger than the viewport. Use [vertical](#method.vertical) and
     /// [horizontal](#method.horizontal) methods to limit scrolling to a specific axis.
-    pub fn new(containing_child: W, sliding_child: Y) -> ScrollInfinite<T, W, Y> {
+    pub fn new(child: W) -> ScrollInfinite<T, W> {
         ScrollInfinite {
-            clip: SlidingClipBox::managed(containing_child, sliding_child),
+            clip: ClipBox::managed(child),
             scroll_component: ScrollComponent::new(),
         }
     }
@@ -82,7 +82,7 @@ impl<T, W: Widget<T>, Y: Widget<T>> ScrollInfinite<T, W, Y> {
     }
 }
 
-impl<T, W, Y> ScrollInfinite<T, W, Y> {
+impl<T, W> ScrollInfinite<T, W> {
     /// Restrict scrolling to the vertical axis while locking child width.
     pub fn vertical(mut self) -> Self {
         self.scroll_component.enabled = ScrollbarsEnabled::Vertical;
@@ -182,12 +182,18 @@ impl<T, W, Y> ScrollInfinite<T, W, Y> {
     }
 }
 
-impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for ScrollInfinite<T, W, Y> {
+pub trait SharesViewport {
+    fn viewport_rect(&self) -> Rect;
+    fn set_viewport_rect(&mut self, rect: Rect);
+}
+
+impl<T: Data + SharesViewport, W: Widget<T>> Widget<T> for ScrollInfinite<T, W> {
     #[instrument(name = "Scroll", level = "trace", skip(self, ctx, event, data, env))]
     fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut T, env: &Env) {
         let scroll_component = &mut self.scroll_component;
-        self.clip.with_port(ctx, |ctx, port| {
+        let view_port_rect = self.clip.viewport_rect_with_origin(ctx, |ctx, port| {
             scroll_component.event(port, ctx, event, env);
+            // println!("new port view rect {:?}", port.view_rect());
         });
         if !ctx.is_handled() {
             self.clip.event(ctx, event, data, env);
@@ -195,7 +201,7 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for ScrollInfinite<T, W, Y> 
 
         // Handle scroll after the inner widget processed the events, to prefer inner widgets while
         // scrolling.
-        self.clip.with_port(ctx, |ctx, port| {
+        let view_port_rect_2 = self.clip.viewport_rect_with_origin(ctx, |ctx, port| {
             scroll_component.handle_scroll(port, ctx, event, env);
 
             if !scroll_component.are_bars_held() {
@@ -213,6 +219,14 @@ impl<T: Data, W: Widget<T>, Y: Widget<T>> Widget<T> for ScrollInfinite<T, W, Y> 
                 }
             }
         });
+
+        match (view_port_rect, view_port_rect_2) {
+            (_, ViewportRect::Changed(rect2)) => data.set_viewport_rect(rect2),
+            (ViewportRect::Changed(rect), ViewportRect::Unchanged(_)) => {
+                data.set_viewport_rect(rect)
+            }
+            _ => {}
+        }
     }
 
     #[instrument(name = "Scroll", level = "trace", skip(self, ctx, event, data, env))]

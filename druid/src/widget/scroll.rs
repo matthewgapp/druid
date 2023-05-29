@@ -22,6 +22,8 @@ use crate::widget::{Axis, ClipBox};
 use crate::{scroll_component::*, Data, Rect, Vec2};
 use tracing::{instrument, trace};
 
+use super::clip_box::ViewportRect;
+
 /// A container that scrolls its contents.
 ///
 /// This container holds a single child, and uses the wheel to scroll it
@@ -184,16 +186,22 @@ impl<T: Data, W: Widget<T>> Widget<T> for Scroll<T, W> {
     #[instrument(name = "Scroll", level = "trace", skip(self, ctx, event, data, env))]
     fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut T, env: &Env) {
         let scroll_component = &mut self.scroll_component;
-        self.clip.with_port(ctx, |ctx, port| {
+        match self.clip.viewport_rect_with_origin(ctx, |ctx, port| {
             scroll_component.event(port, ctx, event, env);
-        });
+            println!("new port view rect {:?}", port.view_rect());
+        }) {
+            ViewportRect::Unchanged(_) => {}
+            ViewportRect::Changed(rect) => {
+                println!("new port view rect {:?}", rect);
+            }
+        }
         if !ctx.is_handled() {
             self.clip.event(ctx, event, data, env);
         }
 
         // Handle scroll after the inner widget processed the events, to prefer inner widgets while
         // scrolling.
-        self.clip.with_port(ctx, |ctx, port| {
+        self.clip.viewport_rect_with_origin(ctx, |ctx, port| {
             scroll_component.handle_scroll(port, ctx, event, env);
 
             if !scroll_component.are_bars_held() {
