@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::commands::{self, SCROLL_TO_VIEW, SCROLL_VIEWPORT_CHANGED};
+use crate::commands::SCROLL_TO_VIEW;
 use crate::contexts::ChangeCtx;
 use crate::debug_state::DebugState;
 use crate::kurbo::{Point, Rect, Size, Vec2};
 use crate::widget::prelude::*;
 use crate::widget::Axis;
-use crate::{platform_menus, Data, InternalLifeCycle, WidgetPod};
+use crate::{Data, InternalLifeCycle, WidgetPod};
 use tracing::{info, instrument, trace, warn};
 
 /// Represents the size and position of a rectangular "viewport" into a larger area.
@@ -28,18 +28,11 @@ pub struct Viewport {
     pub content_size: Size,
     /// The origin of the view rectangle, relative to the content.
     pub view_origin: Point,
-    prev_view_origin: Option<Point>,
     /// The size of the view rectangle.
     pub view_size: Size,
-    prev_view_size: Option<Size>,
 }
 
 impl Viewport {
-    pub fn view_rect_changed(&self) -> bool {
-        self.prev_view_origin != Some(self.view_origin)
-            || self.prev_view_size != Some(self.view_size)
-    }
-
     /// The view rectangle.
     pub fn view_rect(&self) -> Rect {
         Rect::from_origin_size(self.view_origin, self.view_size)
@@ -64,7 +57,7 @@ impl Viewport {
         Point::new(x, y)
     }
 
-    fn sanitize_view_origin(&mut self) {
+    pub(crate) fn sanitize_view_origin(&mut self) {
         self.view_origin = self.clamp_view_origin(self.view_origin);
     }
 
@@ -507,13 +500,6 @@ impl<T: Data, W: Widget<T>> Widget<T> for ClipBox<T, W> {
             self.old_size = self.viewport_size();
         }
 
-        if self.port.view_rect_changed() {
-            ctx.submit_command(SCROLL_VIEWPORT_CHANGED.with(self.port.view_rect()))
-        }
-
-        self.port.prev_view_origin = Some(self.port.view_origin);
-        self.port.prev_view_size = Some(self.port.view_size);
-
         trace!("Computed sized: {}", self.viewport_size());
         self.viewport_size()
     }
@@ -542,8 +528,6 @@ mod tests {
     #[test]
     fn pan_to_visible() {
         let mut viewport = Viewport {
-            prev_view_origin: None,
-            prev_view_size: None,
             content_size: Size::new(400., 400.),
             view_size: (20., 20.).into(),
             view_origin: (20., 20.).into(),
