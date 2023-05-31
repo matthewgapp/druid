@@ -53,6 +53,7 @@ mod slider;
 mod spinner;
 mod split;
 mod stepper;
+pub mod label_selectable;
 #[cfg(feature = "svg")]
 #[cfg_attr(docsrs, doc(cfg(feature = "svg")))]
 mod svg;
