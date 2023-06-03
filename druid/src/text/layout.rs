@@ -141,6 +141,11 @@ impl<T> TextLayout<T> {
         }
     }
 
+    // new method so that I can use this in selectable text
+    pub fn text_alignment(&self) -> TextAlignment {
+        self.alignment
+    }
+
     /// Set the [`TextAlignment`] for this layout.
     pub fn set_text_alignment(&mut self, alignment: TextAlignment) {
         if self.alignment != alignment {

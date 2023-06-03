@@ -17,7 +17,8 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use druid_shell::Cursor;
+use druid_shell::keyboard_types::Key;
+use druid_shell::{Cursor, KeyEvent};
 
 use crate::debug_state::DebugState;
 use crate::kurbo::Vec2;
@@ -25,7 +26,7 @@ use crate::text::TextStorage;
 use crate::widget::prelude::*;
 use crate::widget::Axis;
 use crate::{
-    ArcStr, Color, Data, FontDescriptor, KeyOrValue, LocalizedString, Point, TextAlignment,
+    theme, ArcStr, Color, Data, FontDescriptor, KeyOrValue, LocalizedString, Point, TextAlignment,
     TextLayout,
 };
 use tracing::{instrument, trace, warn};
@@ -83,8 +84,8 @@ pub struct SelectableLabel<T> {
 }
 
 #[derive(Debug, Clone)]
-struct Selection { 
-    start:usize,
+struct Selection {
+    start: usize,
     end: usize,
 }
 
@@ -93,7 +94,6 @@ impl From<Selection> for std::ops::Range<usize> {
         selection.start..selection.end
     }
 }
-
 
 /// A widget that displays text data.
 ///
@@ -479,7 +479,8 @@ impl<T: Data> Widget<T> for SelectableLabel<T> {
     #[instrument(name = "Label", level = "trace", skip(self, _ctx, _event, _data, _env))]
     fn event(&mut self, _ctx: &mut EventCtx, _event: &Event, _data: &mut T, _env: &Env) {
         // TODO: this seems bad but let's seeee
-        self.label.event(_ctx, _event, &mut self.text.display_text(), _env)
+        self.label
+            .event(_ctx, _event, &mut self.text.display_text(), _env)
     }
 
     #[instrument(name = "Label", level = "trace", skip(self, ctx, event, data, env))]
@@ -500,6 +501,7 @@ impl<T: Data> Widget<T> for SelectableLabel<T> {
             let new_text = self.text.display_text();
             self.label.update(ctx, &self.current_text, &new_text, env);
             self.current_text = new_text;
+            self.selection = None;
         } else if ctx.env_changed() {
             self.label
                 .update(ctx, &self.current_text, &self.current_text, env);
@@ -548,16 +550,20 @@ impl<T: TextStorage> Widget<T> for RawLabel<T> {
     )]
     fn event(&mut self, ctx: &mut EventCtx, event: &Event, _data: &mut T, _env: &Env) {
         match event {
-            Event::MouseDown(event) => { 
+            Event::MouseDown(event) => {
                 // Account for the padding
                 let pos = event.pos - Vec2::new(LABEL_X_PADDING, 0.0);
                 let char_pos = self.layout.text_position_for_point(pos);
-                self.selection = Some(Selection { start: char_pos, end: char_pos })
-
+                println!("setting selection");
+                self.selection = Some(Selection {
+                    start: char_pos,
+                    end: char_pos,
+                })
             }
             Event::MouseUp(event) => {
                 // Account for the padding
-                self.selection = None;
+                // self.selection = None;
+                // ctx.request_paint();
                 let pos = event.pos - Vec2::new(LABEL_X_PADDING, 0.0);
                 if let Some(link) = self.layout.link_for_pos(pos) {
                     ctx.submit_command(link.command.clone());
@@ -574,11 +580,28 @@ impl<T: TextStorage> Widget<T> for RawLabel<T> {
                 }
 
                 if let Some(selection) = &mut self.selection {
-                    let char_pos = self.layout.text_position_for_point(pos);
+                    // because this label includes padding, the text position for point will return an index that is over
+                    let char_pos = self.layout.text_position_for_point(pos).min(
+                        self.layout
+                            .text()
+                            .map(|t| t.as_str().len() - 1)
+                            .unwrap_or(0),
+                    );
                     selection.end = char_pos;
-                    println!("rects from selection {:?}", self.layout.rects_for_range(selection.clone().into()));
+                    ctx.request_layout();
+                    ctx.request_paint();
                     println!("selection: {:?}", self.selection);
-                    // ctx.request_paint();k
+                }
+            }
+            Event::KeyDown(KeyEvent { key, .. }) => {
+                println!("key: {:?}", key);
+                match key {
+                    Key::Escape => {
+                        self.selection = None;
+                        ctx.request_layout();
+                        ctx.request_paint();
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -589,6 +612,7 @@ impl<T: TextStorage> Widget<T> for RawLabel<T> {
     fn lifecycle(&mut self, ctx: &mut LifeCycleCtx, event: &LifeCycle, data: &T, _env: &Env) {
         match event {
             LifeCycle::WidgetAdded => {
+                println!("raw label widget added");
                 self.layout.set_text(data.to_owned());
             }
             LifeCycle::DisabledChanged(disabled) => {
@@ -634,6 +658,7 @@ impl<T: TextStorage> Widget<T> for RawLabel<T> {
         let text_metrics = self.layout.layout_metrics();
         ctx.set_baseline_offset(text_metrics.size.height - text_metrics.first_baseline);
         let size = bc.constrain(Size::new(
+            // text_metrics.size.width,
             text_metrics.size.width + 2. * LABEL_X_PADDING,
             text_metrics.size.height,
         ));
@@ -641,13 +666,28 @@ impl<T: TextStorage> Widget<T> for RawLabel<T> {
         size
     }
 
-    #[instrument(name = "RawLabel", level = "trace", skip(self, ctx, _data, _env))]
-    fn paint(&mut self, ctx: &mut PaintCtx, _data: &T, _env: &Env) {
+    #[instrument(name = "RawLabel", level = "trace", skip(self, ctx, _data, env))]
+    fn paint(&mut self, ctx: &mut PaintCtx, _data: &T, env: &Env) {
         let origin = Point::new(LABEL_X_PADDING, 0.0);
+        // let origin = Point::ZERO;
         let label_size = ctx.size();
 
         if self.line_break_mode == LineBreaking::Clip {
             ctx.clip(label_size.to_rect());
+        }
+
+        let sel_rects = self
+            .selection
+            .as_ref()
+            .map(|sel| self.layout.rects_for_range(sel.clone().into()));
+        // let text_offset = Vec2::new(self.layout.text_alignment(), 0.0);
+        if let Some(rects) = sel_rects {
+            let selection_color = env.get(theme::SELECTED_TEXT_BACKGROUND_COLOR);
+            for region in rects {
+                let region = region + Vec2::new(LABEL_X_PADDING, 0.0);
+                let rounded = (region).to_rounded_rect(1.0);
+                ctx.fill(rounded, &selection_color);
+            }
         }
         self.draw_at(ctx, origin)
     }

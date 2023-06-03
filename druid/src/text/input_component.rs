@@ -454,8 +454,10 @@ impl<T: TextStorage + EditableText> Widget<T> for TextComponent<T> {
 
         let cursor_color = env.get(theme::CURSOR_COLOR);
         let text_offset = Vec2::new(self.borrow().alignment_offset, 0.0);
+        println!("text offset {:?}", text_offset);
 
         let selection = self.borrow().selection();
+        println!("selection {:?}", selection);
         let composition = self.borrow().composition_range();
         let sel_rects = self.borrow().layout.rects_for_range(selection.range());
         if let Some(composition) = composition {

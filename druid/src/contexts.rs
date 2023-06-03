@@ -1192,6 +1192,10 @@ impl<'a> ContextState<'a> {
         }
     }
 
+    fn window_size(&self) -> Size {
+        self.window.get_size()
+    }
+
     fn submit_command(&mut self, command: Command) {
         trace!("submit_command");
         self.command_queue
